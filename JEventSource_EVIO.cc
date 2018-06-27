@@ -21,6 +21,8 @@ void InitPlugin(JApplication *app){
 	InitJANAPlugin(app);
 	
 	app->Add( new JEventSourceGeneratorT<JEventSource_EVIO>() );
+	
+	app->GetJThreadManager()->AddQueue( JQueueSet::JQueueType::Events, new JQueueWithBarriers("Parsed"); );
 }
 } // "C"
 
@@ -54,12 +56,12 @@ std::shared_ptr<const JEvent> JEventSource_EVIO::GetEvent(void)
 	// JANA will only call this for one thread at a time so
 	// no need to worry about locks.
 
-	// Get DEVIOWorker from pool. The DEVIOWorker object maintains
-	// its own buffer that we will read the EVIO event into. It
-	// also maintains its own pool of DParsedEvent objects.
-	JEventEVIOBuffer *evt = GetJEventEVIOBufferFromPool();
-	uint32_t* &buff     = evt->buff;
-	uint32_t  &buff_len = evt->buff_len;
+	// Get JEventEVIOBuffer from pool. The JEventEVIOBuffer object has
+	// its own buffer that we will read the EVIO event into, growing it
+	// if needed to hold the entire buffer. 
+	JEventEVIOBuffer *jevent = GetJEventEVIOBufferFromPool();
+	uint32_t* &buff          = jevent->buff;
+	uint32_t  &buff_len      = jevent->buff_len;
 
 	bool swap_needed = false;
 	bool allow_swap = false;
@@ -77,111 +79,21 @@ std::shared_ptr<const JEvent> JEventSource_EVIO::GetEvent(void)
 	if( hdevio->err_code==HDEVIO::HDEVIO_OK ){
 		// HDEVIO_OK
 
-		uint32_t myjobtype = DEVIOWorker::JOB_FULL_PARSE;
-		if(swap_needed && SWAP) myjobtype |= DEVIOWorker::JOB_SWAP;
+		uint32_t myjobtype = JEventEVIOBuffer::JOB_FULL_PARSE;
+		if(swap_needed) myjobtype |= JEventEVIOBuffer::JOB_SWAP;
 
-		evioworker->jobtype = (DEVIOWorkerThread::JOBTYPE)myjobtype;
-		evioworker->istreamorder = istreamorder++;
+		jevent->jobtype = (JEventEVIOBuffer::JOBTYPE)myjobtype;
+		jevent->istreamorder = istreamorder++;
 
-
-		// Create a JEventEVIOBuffer object to encapsulate the DEVIOWorker
-		// object. Give it a lambda function to return the DEVIOWorker to
-		// the out pool when it is evewntually destroyed.
-		auto jevent = new JEventEVIOBuffer( evioworker, [this](DEVIOWorker *evioworker){this->ReturnEVIOWorkerToPool(evioworker);} );
-		jevent->swap_needed = hdevio->swap_needed;
-
-		// Return the JEvent as a shared_ptr
-		return std::shared_ptr<JEvent>( (JEvent*)jevent );
+		// Return the JEvent as a shared_ptr. Supply our own deleter function
+		// to return the JEventEVIOBuffer object to our pool when it's done
+		// instead of actually deleting it.
+		return std::shared_ptr<JEvent>( (JEvent*)jevent, [this,jevent](JEvent*evt){ this->ReturnJEventEVIOBufferToPool(jevent); } );
 
 	}else{
 		// Problem reading in event
-		ReturnBufferToPool( std::move(vbuff) );
-		
-		if(LOOP_FOREVER && NEVENTS_PROCESSED>=1){
-			if(hdevio){
-				hdevio->rewind();
-				throw JEventSource::RETURN_STATUS::kTRY_AGAIN;
-			}
-		}
-		cout << hdevio->err_mess.str() << endl;
-		if( hdevio->err_code == HDEVIO::HDEVIO_EOF ){
-			throw JEventSource::RETURN_STATUS::kNO_MORE_EVENTS;
-		}
 
-		japp->SetExitCode(hdevio->err_code);
-		throw JEventSource::RETURN_STATUS::kERROR;
-	}
-
-
-
-
-
-	}else if(hdevio->err_code!=HDEVIO::HDEVIO_OK){
-		if(LOOP_FOREVER && NEVENTS_PROCESSED>=1){
-			if(hdevio){
-				hdevio->rewind();
-				continue;
-			}
-		}else{
-			cout << hdevio->err_mess.str() << endl;
-			if(hdevio->err_code != HDEVIO::HDEVIO_EOF){
-				bool ignore_error = false;
-				if( (!TREAT_TRUNCATED_AS_ERROR) && (hdevio->err_code == HDEVIO::HDEVIO_FILE_TRUNCATED) ) ignore_error = true;
-				if(!ignore_error) japp->SetExitCode(hdevio->err_code);
-			}
-		}
-		break;
-	}else{
-		// HDEVIO_OK
-		swap_needed = hdevio->swap_needed;
-	}
-
-
-
-
-
-
-
-
-//	// Get buffer from pool
-//	vector<uint32_t> &&vbuff = GetBufferFromPool();
-	
-	// Set buffer size to match its capacity here. We do this now since
-	// the compiler could choose to initialize all of the "new" values,
-	// overwriting anything read into the buffer below. We'll resize it
-	// back down after a successful read.
-	vbuff.resize(vbuff.capacity() );
-	uint32_t *buff = vbuff.data();
-	uint32_t buff_len = vbuff.size();
-
-	// Try reading in EVIO buffer. If buffer is too small, then resize it
-	// and try again.
-	bool allow_swap = false;
-	hdevio->readNoFileBuff(buff, buff_len, allow_swap);
-	if(hdevio->err_code == HDEVIO::HDEVIO_USER_BUFFER_TOO_SMALL){
-		buff_len = hdevio->last_event_len;
-		vbuff.resize(buff_len);
-		buff = vbuff.data();
-		hdevio->readNoFileBuff(buff, buff_len, allow_swap);
-	}
-
-	// Check if read was successful
-	if( hdevio->err_code==HDEVIO::HDEVIO_OK ){
-
-		// HDEVIO_OK
-		vbuff.resize(buff_len);  // shrink size back to actual amount of data
-
-		// Create a JEvent object, passing ownership of the vbuff object data and a
-		// lambda function so it can return it to us when the JEventEVIOBuffer is destroyed
-		auto jevent = new JEventEVIOBuffer( std::move(vbuff), [this](vector<uint32_t> &&vbuff){this->ReturnBufferToPool(std::move(vbuff));} );
-		jevent->swap_needed = hdevio->swap_needed;
-
-		// Return the JEvent as a shared_ptr
-		return std::shared_ptr<JEvent>( (JEvent*)jevent );
-
-	}else{
-		// Problem reading in event
-		ReturnBufferToPool( std::move(vbuff) );
+		ReturnJEventEVIOBufferToPool(jevent);
 		
 		if(LOOP_FOREVER && NEVENTS_PROCESSED>=1){
 			if(hdevio){
@@ -204,9 +116,9 @@ std::shared_ptr<const JEvent> JEventSource_EVIO::GetEvent(void)
 //-----------------------------------
 std::shared_ptr<JTaskBase> JEventSource_EVIO::GetProcessEventTask(std::shared_ptr<const JEvent>&& aEvent)
 {
-	// Create task to process events obtained from source via GetEvent.
-	// i.e. JEventEVIOBuffer objects. The tasks will parse a single JEventEVIOBuffer
-	// event and create one or more JEventEVIOParsed events from it. The parsed
+	// Create task to process events obtained from source via GetEvent().
+	// i.e. JEventEVIOBuffer object. The task will parse a single JEventEVIOBuffer
+	// event and create one or more JEventEVIOParsed events from it. Those parsed
 	// events will be placed in the Parsed event queue with a task to run the
 	// event processors.
 
@@ -252,10 +164,8 @@ JEventEVIOBuffer* JEventSource_EVIO::GetJEventEVIOBufferFromPool(void)
 		// many events are simultaneously in memory and therefore
 		// how big the buffer pool can grow.
 
-		// Create new JEventEVIOBuffer object giving it a function so it
-		// can be returned to our pool later.
-	 	auto recycle_fn = [this](JEventEVIOBuffer *b){ this->ReturnBufferToPool(b); }
-		evt = new JEventEVIOBuffer(this, recycle_fn);
+		// Create new JEventEVIOBuffer object
+		evt = new JEventEVIOBuffer(this);
 
 		// Get the JQueue where parsed events should be placed. This will be
 		// part of the JQueueSet that the JThreadManager associated with this
@@ -271,9 +181,9 @@ JEventEVIOBuffer* JEventSource_EVIO::GetJEventEVIOBufferFromPool(void)
 }
 
 //-----------------------------------
-// ReturnBufferToPool
+// ReturnJEventEVIOBufferToPool
 //-----------------------------------
-void JEventSource_EVIO::ReturnJEventEVIOBufferToPool( JEventEVIOBuffer *jeventeviobuffer )
+void JEventSource_EVIO::ReturnJEventEVIOBufferToPool( JEventEVIOBuffer *evt )
 {
 	// This is primarily called from the JEventEVIOBuffer destructor via
 	// the lambda function passed into it when it was created. It may also
@@ -282,7 +192,7 @@ void JEventSource_EVIO::ReturnJEventEVIOBufferToPool( JEventEVIOBuffer *jeventev
 
 	std::lock_guard<std::mutex> lck(buff_pool_recycled_mutex);
 
-	buff_pool_recycled.emplace( std::move(jeventeviobuffer) );
+	buff_pool_recycled.push( evt );
 }
 
 
