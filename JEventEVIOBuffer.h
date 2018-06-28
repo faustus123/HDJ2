@@ -66,7 +66,7 @@ using namespace std;
 
 #include <HDEVIO.h>
 #include <DParsedEvent.h>
-#include <DModuleType.h>
+#include <DAQ/DModuleType.h>
 #include <JQueueInterface.h>
 
 class JEventEVIOBuffer:JEvent{
@@ -80,8 +80,10 @@ class JEventEVIOBuffer:JEvent{
 			JOB_ASSOCIATE  = 0x8
 		};
 
-		JEventEVIOBuffer(){}
-		virtual ~JEventEVIOBuffer(){}
+		JEventEVIOBuffer(JApplication *aApplication);
+		virtual ~JEventEVIOBuffer();
+
+		void Process(void);
 
 		void SetMaxParsedEvents(uint32_t max) { MAX_PARSED_EVENTS = max; }
 		void SetROCIDsToParse(set<uint32_t> &rocids) { ROCIDS_TO_PARSE = rocids; }
@@ -178,7 +180,7 @@ inline uint32_t JEventEVIOBuffer::F1TDC_channel(uint32_t chip, uint32_t chan_on_
         case DModuleType::F1TDC48:
             return (chip <<3) | chan_on_chip;
         default:
-            _DBG_ << "Calling F1TDC_channel for module type: " << DModuleType::GetName((DModuleType::type_id_t)modtype) << endl;
+            _DBG_ << "Calling F1TDC_channel for module type: " << DModuleType::GetName((DModuleType::type_id_t)modtype) << _DBG_ENDL_;
             throw JException("F1TDC_channel called for non-F1TDC module type");
     }
     return 1000000; // (should never get here)

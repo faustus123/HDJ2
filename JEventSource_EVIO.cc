@@ -14,15 +14,16 @@
 #include "JEventSource_EVIO.h"
 #include "JEventEVIOBuffer.h"
 
+
 //-------------------------------------------------------------------------
 // Plugin glue
 extern "C"{
 void InitPlugin(JApplication *app){
 	InitJANAPlugin(app);
-	
+
 	app->Add( new JEventSourceGeneratorT<JEventSource_EVIO>() );
 	
-	app->GetJThreadManager()->AddQueue( JQueueSet::JQueueType::Events, new JQueueWithBarriers("Parsed"); );
+	app->GetJThreadManager()->AddQueue( JQueueSet::JQueueType::Events, new JQueueWithBarriers("Parsed", 100, 100) );
 }
 } // "C"
 
@@ -63,7 +64,6 @@ std::shared_ptr<const JEvent> JEventSource_EVIO::GetEvent(void)
 	uint32_t* &buff          = jevent->buff;
 	uint32_t  &buff_len      = jevent->buff_len;
 
-	bool swap_needed = false;
 	bool allow_swap = false;
 
 	hdevio->readNoFileBuff(buff, buff_len, allow_swap);
@@ -80,7 +80,7 @@ std::shared_ptr<const JEvent> JEventSource_EVIO::GetEvent(void)
 		// HDEVIO_OK
 
 		uint32_t myjobtype = JEventEVIOBuffer::JOB_FULL_PARSE;
-		if(swap_needed) myjobtype |= JEventEVIOBuffer::JOB_SWAP;
+		if(hdevio->swap_needed) myjobtype |= JEventEVIOBuffer::JOB_SWAP;
 
 		jevent->jobtype = (JEventEVIOBuffer::JOBTYPE)myjobtype;
 		jevent->istreamorder = istreamorder++;
@@ -127,13 +127,13 @@ std::shared_ptr<JTaskBase> JEventSource_EVIO::GetProcessEventTask(std::shared_pt
 	{
 		// The JEvent passed into this should be a JEventEVIOBuffer. We skip the expensive
 		// dynamic cast and assume it is.
-		(JEventEVIOBuffer*)(aEvent.get())->Process();
+		((JEventEVIOBuffer*)aEvent.get())->Process();
 
 	};
 	auto sPackagedTask = std::packaged_task<void(const std::shared_ptr<const JEvent>&)>(sParseBuffer);
 
 	// Get the JTask, set it up, and return it
-	auto sTask = aApplication->GetVoidTask(); //std::make_shared<JTask<void>>(aEvent, sPackagedTask);
+	auto sTask = mApplication->GetVoidTask(); //std::make_shared<JTask<void>>(aEvent, sPackagedTask);
 	sTask->SetEvent(std::move(aEvent));
 	sTask->SetTask(std::move(sPackagedTask));
 	return std::static_pointer_cast<JTaskBase>(sTask);
@@ -165,15 +165,15 @@ JEventEVIOBuffer* JEventSource_EVIO::GetJEventEVIOBufferFromPool(void)
 		// how big the buffer pool can grow.
 
 		// Create new JEventEVIOBuffer object
-		evt = new JEventEVIOBuffer(this);
+		evt = new JEventEVIOBuffer(mApplication);
 
 		// Get the JQueue where parsed events should be placed. This will be
 		// part of the JQueueSet that the JThreadManager associated with this
 		// event source.
-		evt->mParsedQueue = mApplication->GetJThreadManager()->GetQueue(this, JQueueSet::JQueueType:Events, "Parsed");
+		evt->mParsedQueue = mApplication->GetJThreadManager()->GetQueue(this, JQueueSet::JQueueType::Events, "Parsed");
 
 	}else{
-		auto evt = buff_pool.top();
+		evt = buff_pool.top();
 		buff_pool.pop();
 	}
 

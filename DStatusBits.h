@@ -49,7 +49,6 @@ enum StatusBitType{
 	kSTATUS_NONE = 31
 };
 
-
 class DStatusBits{
 	public:
 		DStatusBits(){}

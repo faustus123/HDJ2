@@ -75,7 +75,9 @@
 
 #include <JANA/JApplication.h>
 #include <JANA/JEventSource.h>
+#include <JANA/JQueueWithBarriers.h>
 
+#include <JEventEVIOBuffer.h>
 #include <HDEVIO.h>
 
 
@@ -92,6 +94,11 @@ class  JEventSource_EVIO: public JEventSource{
 		// This method is called to read in a single "event"
 		std::shared_ptr<const JEvent> GetEvent(void);
 
+		// This is called to generate a JTask capable of processing and event
+		// returned by the GetEvent method above.
+		std::shared_ptr<JTaskBase> GetProcessEventTask(std::shared_ptr<const JEvent>&& aEvent);
+
+
 	protected:
 		int                VERBOSE = 0;
 		bool          LOOP_FOREVER = false;
@@ -99,8 +106,8 @@ class  JEventSource_EVIO: public JEventSource{
 		uint64_t      istreamorder = 0;
 	
 		HDEVIO *hdevio = nullptr;
-		std::stack< vector<uint32_t> > buff_pool;
-		std::stack< vector<uint32_t> > buff_pool_recycled;
+		std::stack< JEventEVIOBuffer* > buff_pool;
+		std::stack< JEventEVIOBuffer* > buff_pool_recycled;
 		std::mutex buff_pool_recycled_mutex;
 	
 		JEventEVIOBuffer* GetJEventEVIOBufferFromPool(void);

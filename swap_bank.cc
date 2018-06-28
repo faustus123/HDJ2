@@ -4,10 +4,10 @@
 #include <string.h>
 
 #include <iostream>
+#include <sstream>
 using namespace std;
 
 #include <JANA/JException.h>
-using namespace jana;
 
 //---------------------------------
 // swap_bank

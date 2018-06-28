@@ -8,11 +8,13 @@
 #include <unistd.h>
 #include <ctime>
 
-#include "JEventEVIOBuffer.h"
-#include "LinkAssociations.h"
-
 #include <swap_bank.h>
-#include <DANA/JExceptionDataFormat.h>
+#include <JExceptionDataFormat.h>
+#include <LinkAssociations.h>
+#include <JEventEVIOBuffer.h>
+#include <DStatusBits.h>
+#include <DAQ/daq_param_type.h>
+#include <DAQ/DVector3.h>
 
 using namespace std;
 using namespace std::chrono;
@@ -22,7 +24,7 @@ using namespace std::chrono;
 //---------------------------------
 // JEventEVIOBuffer    (Constructor)
 //---------------------------------
-JEventEVIOBuffer::JEventEVIOBuffer(void)
+JEventEVIOBuffer::JEventEVIOBuffer(JApplication *aApplication):JEvent(aApplication)
 {
 	/// Objects of this class will be created by JEventSource_EVIO.
 	/// They will be recycled via a pool maintained by that object.
@@ -88,16 +90,18 @@ void JEventEVIOBuffer::Process(void)
 		parsed_event_pool.clear();
 		current_parsed_events.clear(); // (these are also in parsed_event_pool so were already deleted)
 		jerr << "Data format error exception caught" << endl;
-		jerr << "Stack trace follows:" << endl;
-		jerr << e.getStackTrace() << endl;
-		jerr << e.what() << endl;
-		japp->Quit(10);
+//		jerr << "Stack trace follows:" << endl;
+//		jerr << e.getStackTrace() << endl;
+//		jerr << e.what() << endl;
+		japp->SetExitCode(10);
+		japp->Quit();
 	} catch (exception &e) {
 		jerr << e.what() << endl;
 		for(auto pe : parsed_event_pool) delete pe; // delete all parsed events and any objects they hold
 		parsed_event_pool.clear();
 		current_parsed_events.clear(); // (these are also in parsed_event_pool so were already deleted)
-		japp->Quit(-1);
+		japp->SetExitCode(-1);
+		japp->Quit();
 	}
 }
 
@@ -222,8 +226,26 @@ void JEventEVIOBuffer::PublishEvents(void)
 		
 		// Make a task to run the event processors on this event and
 		// place it in the queue. (See JFunctions.cc in JANA code)
-		auto task = JMakeAnalyzeEventTask( std::move(pesp), mApplication );
-		mParsedQueue->AddTask( std::move(task) );
+		auto task = JMakeAnalyzeEventTask( std::move(pesp), GetJApplication() );
+
+		while( mParsedQueue->AddTask( std::move(task) ) == JQueueInterface::Flags_t::kQUEUE_FULL ){
+			// Crap, the queue is full. Try pulling a task off and running it here.
+			// Then we can try adding our task again.
+			auto sEventTask = mParsedQueue->GetTask();
+			if( sEventTask != nullptr ){
+				(*sEventTask)();
+				mParsedQueue->AddTasksProcessedOutsideQueue(1);
+			}
+		}
+
+		switch( mParsedQueue->AddTask( std::move(task) ) ){
+			case JQueueInterface::Flags_t::kNone:
+			case JQueueInterface::Flags_t::kNO_ERROR:
+				break;
+			case JQueueInterface::Flags_t::kQUEUE_FULL:
+
+				break;
+		}
 	}
 
 	// Any events should now be published
@@ -244,7 +266,7 @@ void JEventEVIOBuffer::ParseBank(void)
 		uint32_t event_head = iptr[1];
 		uint32_t tag = (event_head >> 16) & 0xFFFF;
 
-// _DBG_ << "0x" << hex << (uint64_t)iptr << dec << ": event_len=" << event_len << "tag=" << hex << tag << dec << endl;
+// _DBG_ << "0x" << hex << (uint64_t)iptr << dec << ": event_len=" << event_len <<" ("<< swap32(event_len)<< ") tag=" << hex << tag << dec << _DBG_ENDL_;
 
 		switch(tag){
 			case 0x0060:       ParseEPICSbank(iptr, iend);    break;
@@ -261,7 +283,7 @@ void JEventEVIOBuffer::ParseBank(void)
 			case 0xFF70:     ParsePhysicsBank(iptr, iend);    break;
 
 			default:
-				_DBG_ << "Unknown outer EVIO bank tag: " << hex << tag << dec << endl;
+				_DBG_ << "Unknown outer EVIO bank tag: " << hex << tag << dec << _DBG_ENDL_;
 				iptr = &iptr[event_len+1];
 				if(event_len<1) iptr = iend;		
 		}
@@ -284,7 +306,8 @@ void JEventEVIOBuffer::ParseEventTagBank(uint32_t* &iptr, uint32_t *iend)
 	uint64_t evt_status_hi     = *iptr++;
 	uint64_t l3_status_lo      = *iptr++;
 	uint64_t l3_status_hi      = *iptr++;
-	auto l3_decision           = (DL3Trigger::L3_decision_t)*iptr++;
+	uint64_t l3_decision       = 0;
+//	auto l3_decision           = (DL3Trigger::L3_decision_t)*iptr++;
 	uint32_t l3_algorithm      = *iptr++;
 	uint32_t mva_encoded       = *iptr++;
 	
@@ -310,7 +333,7 @@ void JEventEVIOBuffer::ParseEPICSbank(uint32_t* &iptr, uint32_t *iend)
 	uint32_t *istart = iptr;
 	uint32_t epics_bank_len = *iptr++;	
 	if(epics_bank_len < 1){
-		_DBG_ << "bank_len<1 in EPICS event!" << endl;
+		_DBG_ << "bank_len<1 in EPICS event!" << _DBG_ENDL_;
 		iptr = iend;
 		return;
 	}
@@ -323,7 +346,7 @@ void JEventEVIOBuffer::ParseEPICSbank(uint32_t* &iptr, uint32_t *iend)
 	
 	// Get pointer to first DParsedEvent
 	DParsedEvent *pe = current_parsed_events.front();
-	pe->event_status_bits |= (1<<kSTATUS_EPICS_EVENT);
+	pe->event_status_bits |= (1<<(uint64_t)kSTATUS_EPICS_EVENT);
 	
 	// Loop over daughter banks
 	while( iptr < iend_epics ){
@@ -341,7 +364,7 @@ void JEventEVIOBuffer::ParseEPICSbank(uint32_t* &iptr, uint32_t *iend)
 			pe->NEW_DEPICSvalue(timestamp, nameval);
 		}else{
 			// Unknown tag. Bail
-			_DBG_ << "Unknown tag 0x" << hex << tag << dec << " in EPICS event!" <<endl;
+			_DBG_ << "Unknown tag 0x" << hex << tag << dec << " in EPICS event!" <<_DBG_ENDL_;
 			DumpBinary(istart, iend_epics, 32, &iptr[-1]);
 			throw JExceptionDataFormat("Unknown tag in EPICS bank", __FILE__, __LINE__);
 		}
@@ -395,7 +418,7 @@ void JEventEVIOBuffer::ParseBORbank(uint32_t* &iptr, uint32_t *iend)
 	// Create new DBORptrs object and set pointer to it in DParsedEvent
 	// (see JEventSource_EVIOpp::GetEvent)
 	DParsedEvent *pe = current_parsed_events.front();
-	pe->event_status_bits |= (1<<kSTATUS_BOR_EVENT);
+	pe->event_status_bits |= (1<<(uint64_t)kSTATUS_BOR_EVENT);
 	pe->borptrs = new DBORptrs();
 	DBORptrs* &borptrs = pe->borptrs;
 	
@@ -523,8 +546,8 @@ void JEventEVIOBuffer::ParseTSscalerBank(uint32_t* &iptr, uint32_t *iend)
     uint32_t Nwords = ((uint64_t)iend - (uint64_t)iptr)/sizeof(uint32_t);
     uint32_t Nwords_expected = (6+32+16+32+16);
     if(Nwords != Nwords_expected){
-        _DBG_ << "TS bank size does not match expected!!" << endl;
-        _DBG_ << "Found " << Nwords << " words. Expected " << Nwords_expected << endl;
+        _DBG_ << "TS bank size does not match expected!!" << _DBG_ENDL_;
+        _DBG_ << "Found " << Nwords << " words. Expected " << Nwords_expected << _DBG_ENDL_;
         throw JExceptionDataFormat("TS bank size does not match expected", __FILE__, __LINE__);
     }else{
 	 	// n.b. Get the last event here since if this is a block
@@ -555,8 +578,8 @@ void JEventEVIOBuffer::Parsef250scalerBank(uint32_t rocid, uint32_t* &iptr, uint
   uint32_t Nwords = ((uint64_t)iend - (uint64_t)iptr)/sizeof(uint32_t);
 
   if(Nwords < 4){
-    _DBG_ << "250Scaler bank size does not match expected!!" << endl;
-    _DBG_ << "Found " << Nwords << endl;
+    _DBG_ << "250Scaler bank size does not match expected!!" << _DBG_ENDL_;
+    _DBG_ << "Found " << Nwords << _DBG_ENDL_;
     throw JExceptionDataFormat("250scaler bank size does not match expected", __FILE__, __LINE__);
   } else {
 
@@ -602,7 +625,7 @@ void JEventEVIOBuffer::ParseControlEvent(uint32_t* &iptr, uint32_t *iend)
 	jout << "Control event: " << type << " - " << tstr << endl;
 
 	for(auto pe : current_parsed_events) {
-		pe->event_status_bits |= (1<<kSTATUS_CONTROL_EVENT);
+		pe->event_status_bits |= (1<<(uint64_t)kSTATUS_CONTROL_EVENT);
 		auto controlevent = pe->NEW_DCODAControlEvent();
 		controlevent->event_type = iptr[1]>>16;
 		controlevent->unix_time = t;
@@ -618,7 +641,7 @@ void JEventEVIOBuffer::ParseControlEvent(uint32_t* &iptr, uint32_t *iend)
 void JEventEVIOBuffer::ParsePhysicsBank(uint32_t* &iptr, uint32_t *iend)
 {
 
-	for(auto pe : current_parsed_events) pe->event_status_bits |= (1<<kSTATUS_PHYSICS_EVENT);
+	for(auto pe : current_parsed_events) pe->event_status_bits |= (1<<(uint64_t)kSTATUS_PHYSICS_EVENT);
 
 	uint32_t physics_event_len      = *iptr++;
 	uint32_t *iend_physics_event    = &iptr[physics_event_len];
@@ -683,7 +706,7 @@ void JEventEVIOBuffer::ParseBuiltTriggerBank(uint32_t* &iptr, uint32_t *iend)
    // Hi and lo 32bit words in 64bit numbers seem to be
    // switched for events read from ET, but not read from
    // file. Not sure if this is in the swapping routine
-   if(event_source->source_type==event_source->kETSource) first_event_num = (first_event_num>>32) | (first_event_num<<32);
+//   if(event_source->source_type==event_source->kETSource) first_event_num = (first_event_num>>32) | (first_event_num<<32);
 
 	// Average timestamps
    uint32_t Ntimestamps = (common_header64_len/2)-1;
@@ -927,7 +950,7 @@ void JEventEVIOBuffer::ParseCAEN1190(uint32_t rocid, uint32_t* &iptr, uint32_t *
                 bunch_id = (*iptr) & 0x0fff;
 				if(events_by_event_id.find(event_id) == events_by_event_id.end()){
 					if(pe_iter == current_parsed_events.end()){
-						_DBG_ << "CAEN1290TDC parser sees more events than CODA header! (>" << current_parsed_events.size() << ")" << endl;
+						_DBG_ << "CAEN1290TDC parser sees more events than CODA header! (>" << current_parsed_events.size() << ")" << _DBG_ENDL_;
 						for( auto p : events_by_event_id) cout << "id=" << p.first << endl;
 						iptr = iend;
 						throw JExceptionDataFormat("CAEN1290TDC parser sees more events than CODA header", __FILE__, __LINE__);
@@ -1011,7 +1034,7 @@ void JEventEVIOBuffer::ParseModuleConfiguration(uint32_t rocid, uint32_t* &iptr,
         // Loop over all parameters in this section
         for(uint32_t i=0; i< Nvals; i++){
             if( iptr >= iend){
-                _DBG_ << "DAQ Configuration bank corrupt! slot_mask=0x" << hex << slot_mask << dec << " Nvals="<< Nvals << endl;
+                _DBG_ << "DAQ Configuration bank corrupt! slot_mask=0x" << hex << slot_mask << dec << " Nvals="<< Nvals << _DBG_ENDL_;
                 throw JExceptionDataFormat("Corrupt DAQ config. bank", __FILE__, __LINE__);
             }
 
@@ -1032,7 +1055,7 @@ void JEventEVIOBuffer::ParseModuleConfiguration(uint32_t rocid, uint32_t* &iptr,
                         case kPARAM250_NSB            : f250config->NSB              = val; break;
                         case kPARAM250_NSA_NSB        : f250config->NSA_NSB          = val; break;
                         case kPARAM250_NPED           : f250config->NPED             = val; break;
-                        default: _DBG_ << "UNKNOWN DAQ Config Parameter type: 0x" << hex << ptype << dec << endl;
+                        default: _DBG_ << "UNKNOWN DAQ Config Parameter type: 0x" << hex << ptype << dec << _DBG_ENDL_;
                     }
                     break;
 
@@ -1058,7 +1081,7 @@ void JEventEVIOBuffer::ParseModuleConfiguration(uint32_t rocid, uint32_t* &iptr,
                         case kPARAM125_IBIT           : f125config->IBIT             = val; break;
                         case kPARAM125_ABIT           : f125config->ABIT             = val; break;
                         case kPARAM125_PBIT           : f125config->PBIT             = val; break;
-                        default: _DBG_ << "UNKNOWN DAQ Config Parameter type: 0x" << hex << ptype << dec << endl;
+                        default: _DBG_ << "UNKNOWN DAQ Config Parameter type: 0x" << hex << ptype << dec << _DBG_ENDL_;
                     }
                     break;
 
@@ -1072,7 +1095,7 @@ void JEventEVIOBuffer::ParseModuleConfiguration(uint32_t rocid, uint32_t* &iptr,
                         case kPARAMF1_HSDIV           : f1tdcconfig->HSDIV           = val; break;
                         case kPARAMF1_BINSIZE         : f1tdcconfig->BINSIZE         = val; break;
                         case kPARAMF1_REFCLKDIV       : f1tdcconfig->REFCLKDIV       = val; break;
-                        default: _DBG_ << "UNKNOWN DAQ Config Parameter type: 0x" << hex << ptype << dec << endl;
+                        default: _DBG_ << "UNKNOWN DAQ Config Parameter type: 0x" << hex << ptype << dec << _DBG_ENDL_;
                     }
                     break;
 
@@ -1082,12 +1105,12 @@ void JEventEVIOBuffer::ParseModuleConfiguration(uint32_t rocid, uint32_t* &iptr,
                     switch(ptype){
                         case kPARAMCAEN1290_WINWIDTH  : caen1290tdcconfig->WINWIDTH  = val; break;
                         case kPARAMCAEN1290_WINOFFSET : caen1290tdcconfig->WINOFFSET = val; break;
-                        default: _DBG_ << "UNKNOWN DAQ Config Parameter type: 0x" << hex << ptype << dec << endl;
+                        default: _DBG_ << "UNKNOWN DAQ Config Parameter type: 0x" << hex << ptype << dec << _DBG_ENDL_;
                     }
                     break;
 
                 default:
-                    _DBG_ << "Unknown module type: 0x" << hex << (ptype>>8) << endl;
+                    _DBG_ << "Unknown module type: 0x" << hex << (ptype>>8) << _DBG_ENDL_;
                     throw JExceptionDataFormat("Unknown module type in configuration bank", __FILE__, __LINE__);
             }
 
@@ -1268,7 +1291,7 @@ void JEventEVIOBuffer::Parsef250Bank(uint32_t rocid, uint32_t* &iptr, uint32_t *
 					
 					// event_number_within_block=0 indicates error
 					if(event_number_within_block==0){
-						_DBG_<<"event_number_within_block==0. This indicates a bug in firmware." << endl;
+						_DBG_<<"event_number_within_block==0. This indicates a bug in firmware." << _DBG_ENDL_;
 						exit(-1);
 					}
 
@@ -1859,7 +1882,7 @@ void JEventEVIOBuffer::ParseF1TDCBank(uint32_t rocid, uint32_t* &iptr, uint32_t 
 			default:
 				cerr<<endl;
 				cout.flush(); cerr.flush();
-				_DBG_<<"Unknown data word in F1TDC block. Dumping for debugging:" << endl;
+				_DBG_<<"Unknown data word in F1TDC block. Dumping for debugging:" << _DBG_ENDL_;
 				for(const uint32_t *iiptr = istart; iiptr<iend; iiptr++){
 					_DBG_<<"0x"<<hex<<*iiptr<<dec;
 					if(iiptr == iptr)cerr<<"  <----";
@@ -1874,7 +1897,7 @@ void JEventEVIOBuffer::ParseF1TDCBank(uint32_t rocid, uint32_t* &iptr, uint32_t 
 						case 0xF0000000: cerr << "   <module has no valid data>"; break;
 						default: break;
 					}
-					cerr<<endl;
+					cerr<<_DBG_ENDL_;
 					if(iiptr > (iptr+4)) break;
 				}
 				throw JExceptionDataFormat("Unexpected word type in F1TDC block!", __FILE__, __LINE__);
@@ -1894,8 +1917,8 @@ void JEventEVIOBuffer::ParseDEventRFBunchBank(uint32_t* &iptr, uint32_t *iend)
     uint32_t Nwords = ((uint64_t)iend - (uint64_t)iptr)/sizeof(uint32_t);
     uint32_t Nwords_expected = 6; 
     if(Nwords != Nwords_expected){
-        _DBG_ << "RFTime size does not match expected!!" << endl;
-        _DBG_ << "Found " << Nwords << " words. Expected " << Nwords_expected << endl;
+        _DBG_ << "RFTime size does not match expected!!" << _DBG_ENDL_;
+        _DBG_ << "Found " << Nwords << " words. Expected " << Nwords_expected << _DBG_ENDL_;
     }else{
 		DParsedEvent *pe = current_parsed_events.back();
 		DEventRFBunch *the_rftime = pe->NEW_DEventRFBunch();
@@ -1927,8 +1950,8 @@ void JEventEVIOBuffer::ParseDVertexBank(uint32_t* &iptr, uint32_t *iend)
     uint32_t Nwords = ((uint64_t)iend - (uint64_t)iptr)/sizeof(uint32_t);
     uint32_t Nwords_expected = 11; 
     if(Nwords != Nwords_expected){
-        _DBG_ << "DVertex size does not match expected!!" << endl;
-        _DBG_ << "Found " << Nwords << " words. Expected " << Nwords_expected << endl;
+        _DBG_ << "DVertex size does not match expected!!" << _DBG_ENDL_;
+        _DBG_ << "Found " << Nwords << " words. Expected " << Nwords_expected << _DBG_ENDL_;
     }else{
 		DParsedEvent *pe = current_parsed_events.back();
 		DVertex *the_vertex = pe->NEW_DVertex();
