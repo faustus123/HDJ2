@@ -517,7 +517,7 @@ bool HDEVIO::readNoFileBuff(uint32_t *user_buff, uint32_t user_buff_len, bool al
 		streampos pos = ifs.tellg() - (streampos)sizeof(bh);
 
 		if( (uint64_t)(pos+(streampos)bh.length) >  total_size_bytes ){
-			err_mess << "EVIO block extends past end of file!";
+			err_mess << "EVIO block extends past end of file! (" << (uint64_t)(pos+(streampos)bh.length)<< " > " << total_size_bytes << ")";
 			err_code = HDEVIO_FILE_TRUNCATED;
 			return false;
 		}
