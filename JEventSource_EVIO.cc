@@ -11,9 +11,10 @@
 
 #include <JApplication.h>
 #include <JANA/JEventSourceGeneratorT.h>
+#include <JANA/JQueue.h>
 #include "JEventSource_EVIO.h"
 #include "JEventEVIOBuffer.h"
-
+#include "JEventProcessorTest.h"
 
 //-------------------------------------------------------------------------
 // Plugin glue
@@ -22,8 +23,8 @@ void InitPlugin(JApplication *app){
 	InitJANAPlugin(app);
 
 	app->Add( new JEventSourceGeneratorT<JEventSource_EVIO>() );
-	
-	app->GetJThreadManager()->AddQueue( JQueueSet::JQueueType::Events, new JQueueWithBarriers("Parsed", 100, 100) );
+	app->Add( new JEventProcessorTest() );
+
 }
 } // "C"
 
@@ -34,6 +35,36 @@ JEventSource_EVIO::JEventSource_EVIO(std::string source_name, JApplication *app)
 {
 	gPARMS->SetDefaultParameter("EVIO:VERBOSE", VERBOSE, "Set verbosity level for processing and debugging statements while parsing. 0=no debugging messages. 10=all messages");
 
+
+	// Tell JANA how many times to call GetEvent in a row while it has the lock.
+	// This will reduce the number of times the lock must be obtained.
+	// Note: It may not always call GetEvent maxtimes in a row. It applies
+	// an algorithm to decide how many, up to that limit.
+	SetNumEventsToGetAtOnce(1, 1);
+
+	// Queue to hold EVIO buffers (blocks of events). We could omit this to
+	// let JANA instantiate one for us
+	mEventQueue = new JQueue("Events", 1);
+
+	// Create a separate queue to hold parsed events
+	app->GetJThreadManager()->AddQueue( JQueueSet::JQueueType::Events, new JQueueWithBarriers("Parsed", 100, 100) );
+}
+
+//-----------------------------------
+// JEventSource_EVIO  Destructor
+//-----------------------------------
+JEventSource_EVIO::~JEventSource_EVIO()
+{
+	std::lock_guard<std::mutex> lck(buff_pool_recycled_mutex);
+	for( auto p : buff_pool ) delete p;
+	if( hdevio ) delete hdevio;
+}
+
+//-----------------------------------
+// Open
+//-----------------------------------
+void JEventSource_EVIO::Open(void)
+{
 	// Try to open the file.
 	if(VERBOSE>0) jout << "Attempting to open EVIO file \"" << this->mName<< "\" ..." << endl;
 	hdevio = new HDEVIO( this->mName, true, VERBOSE);
@@ -41,12 +72,6 @@ JEventSource_EVIO::JEventSource_EVIO(std::string source_name, JApplication *app)
 		cerr << hdevio->err_mess.str() << endl;
 		throw JException("Failed to open EVIO file: " + this->mName, __FILE__, __LINE__); // throw exception indicating error
 	}
-
-	// Tell JANA how many times to call GetEvent in a row while it has the lock.
-	// This will reduce the number of times the lock must be obtained.
-	// Note: It may not always call GetEvent maxtimes in a row. It applies
-	// an algorithm to decide how many, up to that limit.
-	SetNumEventsToGetAtOnce(1, 10);
 }
 
 //-----------------------------------
@@ -56,6 +81,7 @@ std::shared_ptr<const JEvent> JEventSource_EVIO::GetEvent(void)
 {
 	// JANA will only call this for one thread at a time so
 	// no need to worry about locks.
+	mNcallsGetEvent++;
 
 	// Get JEventEVIOBuffer from pool. The JEventEVIOBuffer object has
 	// its own buffer that we will read the EVIO event into, growing it
@@ -173,8 +199,8 @@ JEventEVIOBuffer* JEventSource_EVIO::GetJEventEVIOBufferFromPool(void)
 		evt->mParsedQueue = mApplication->GetJThreadManager()->GetQueue(this, JQueueSet::JQueueType::Events, "Parsed");
 
 	}else{
-		evt = buff_pool.top();
-		buff_pool.pop();
+		evt = buff_pool.front();
+		buff_pool.pop_front();
 	}
 
 	return evt;
@@ -193,7 +219,7 @@ void JEventSource_EVIO::ReturnJEventEVIOBufferToPool( JEventEVIOBuffer *evt )
 	std::lock_guard<std::mutex> lck(buff_pool_recycled_mutex);
 
 	evt->Release();
-	buff_pool_recycled.push( evt );
+	buff_pool_recycled.push_back( evt );
 }
 
 

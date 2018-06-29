@@ -71,7 +71,7 @@
 #include <utility>
 #include <cstdint>
 #include <mutex>
-#include <stack>
+#include <deque>
 
 #include <JANA/JApplication.h>
 #include <JANA/JEventSource.h>
@@ -87,6 +87,11 @@ class  JEventSource_EVIO: public JEventSource{
 		// Constructor must take string and JApplication pointer as arguments
 		// and pass them into JEventSource constructor.
 		JEventSource_EVIO(std::string source_name, JApplication *app);
+		~JEventSource_EVIO();
+
+		// This method will be called by JANA when the source should actually
+		// be opened for reading.
+		void Open(void);
 	
 		// A description of this source type must be provided as a static member
 		static std::string GetDescription(void){ return "EVIO Event source"; }
@@ -98,7 +103,6 @@ class  JEventSource_EVIO: public JEventSource{
 		// returned by the GetEvent method above.
 		std::shared_ptr<JTaskBase> GetProcessEventTask(std::shared_ptr<const JEvent>&& aEvent);
 
-
 	protected:
 		int                VERBOSE = 0;
 		bool          LOOP_FOREVER = false;
@@ -106,14 +110,17 @@ class  JEventSource_EVIO: public JEventSource{
 		uint64_t      istreamorder = 0;
 	
 		HDEVIO *hdevio = nullptr;
-		std::stack< JEventEVIOBuffer* > buff_pool;
-		std::stack< JEventEVIOBuffer* > buff_pool_recycled;
+		std::deque< JEventEVIOBuffer* > buff_pool;
+		std::deque< JEventEVIOBuffer* > buff_pool_recycled;
 		std::mutex buff_pool_recycled_mutex;
 	
 		JEventEVIOBuffer* GetJEventEVIOBufferFromPool(void);
 		void ReturnJEventEVIOBufferToPool( JEventEVIOBuffer *jeventeviobuffer );
 	
 		JQueueInterface *mParsedQueue = nullptr;
+
+	private:
+		std::atomic<uint64_t> mNcallsGetEvent{0};
 
 };
 

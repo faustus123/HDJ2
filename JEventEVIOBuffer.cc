@@ -141,7 +141,6 @@ void JEventEVIOBuffer::Prune(void)
 //---------------------------------
 void JEventEVIOBuffer::MakeEvents(void)
 {
-	
 	/// Make DParsedEvent objects from data currently in buff.
 	/// This will look at the begining of the EVIO event to see
 	/// how many L1 events are in it. It will then grab that many
@@ -224,7 +223,7 @@ void JEventEVIOBuffer::PublishEvents(void)
 		// clears the "in_use" flag to make the event available for
 		// reuse in the pool rather than actually deleting it
 		std::shared_ptr<const JEvent> pesp(pe, [](DParsedEvent *pe){ pe->in_use = false; } );
-		
+
 		// Make a task to run the event processors on this event and
 		// place it in the queue. (See JFunctions.cc in JANA code)
 		auto task = JMakeAnalyzeEventTask( std::move(pesp), GetJApplication() );
@@ -237,15 +236,6 @@ void JEventEVIOBuffer::PublishEvents(void)
 				(*sEventTask)();
 				mParsedQueue->AddTasksProcessedOutsideQueue(1);
 			}
-		}
-
-		switch( mParsedQueue->AddTask( std::move(task) ) ){
-			case JQueueInterface::Flags_t::kNone:
-			case JQueueInterface::Flags_t::kNO_ERROR:
-				break;
-			case JQueueInterface::Flags_t::kQUEUE_FULL:
-
-				break;
 		}
 	}
 
