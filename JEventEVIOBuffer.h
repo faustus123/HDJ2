@@ -69,7 +69,7 @@ using namespace std;
 #include <DAQ/DModuleType.h>
 #include <JQueueInterface.h>
 
-class JEventEVIOBuffer:JEvent{
+class JEventEVIOBuffer:public JEvent{
 	public:
 	
 		enum JOBTYPE{
