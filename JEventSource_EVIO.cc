@@ -192,6 +192,7 @@ void JEventSource_EVIO::ReturnJEventEVIOBufferToPool( JEventEVIOBuffer *evt )
 
 	std::lock_guard<std::mutex> lck(buff_pool_recycled_mutex);
 
+	evt->Release();
 	buff_pool_recycled.push( evt );
 }
 
