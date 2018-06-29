@@ -7,6 +7,7 @@
 
 #include <unistd.h>
 #include <ctime>
+#include <iomanip>
 
 #include <swap_bank.h>
 #include <JExceptionDataFormat.h>
@@ -222,7 +223,7 @@ void JEventEVIOBuffer::PublishEvents(void)
 		// Add custom deleter to the shared pointer so that it simply
 		// clears the "in_use" flag to make the event available for
 		// reuse in the pool rather than actually deleting it
-		std::shared_ptr<const JEvent> pesp(pe, [this](DParsedEvent *pe){ pe->in_use = false; } );
+		std::shared_ptr<const JEvent> pesp(pe, [](DParsedEvent *pe){ pe->in_use = false; } );
 		
 		// Make a task to run the event processors on this event and
 		// place it in the queue. (See JFunctions.cc in JANA code)
