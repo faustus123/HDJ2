@@ -42,12 +42,15 @@ JEventSource_EVIO::JEventSource_EVIO(std::string source_name, JApplication *app)
 	// an algorithm to decide how many, up to that limit.
 	SetNumEventsToGetAtOnce(1, 1);
 
-	// Queue to hold EVIO buffers (blocks of events). We could omit this to
-	// let JANA instantiate one for us
-	mEventQueue = new JQueue("Events", 1);
-
-	// Create a separate queue to hold parsed events
-	app->GetJThreadManager()->AddQueue( JQueueSet::JQueueType::Events, new JQueueWithBarriers("Parsed", 100, 100) );
+	// We use 2 queues, one to hold the EVIO buffers (filled by JANA with events
+	// read via GetEvent() below) and the other for parsed events. Both are queues
+	// of type "Events". JANA will always use the first "Events" queue for things
+	// read via GetEvent(). The queue pointed to by mEventQueue will always be the
+	// last "Events" queue (so make sure "EVIOBuffer" is first).
+	// n.b. If we didn't set mEventQueue here, JANA would create one for us, but
+	// it would be a plain JQueue instead of a JQueueWithBarriers.
+	app->GetJThreadManager()->AddQueue( JQueueSet::JQueueType::Events, new JQueue("EVIOBuffer", 1) );
+	mEventQueue = new JQueueWithBarriers("Parsed", 50, 50);
 }
 
 //-----------------------------------
@@ -57,6 +60,7 @@ JEventSource_EVIO::~JEventSource_EVIO()
 {
 	std::lock_guard<std::mutex> lck(buff_pool_recycled_mutex);
 	for( auto p : buff_pool ) delete p;
+	for( auto p : buff_pool_recycled ) delete p;
 	if( hdevio ) delete hdevio;
 }
 
@@ -105,9 +109,9 @@ std::shared_ptr<const JEvent> JEventSource_EVIO::GetEvent(void)
 	if( hdevio->err_code==HDEVIO::HDEVIO_OK ){
 		// HDEVIO_OK
 
+		// Fill in some info. on what to do in JEventEVIOBuffer::Process
 		uint32_t myjobtype = JEventEVIOBuffer::JOB_FULL_PARSE;
 		if(hdevio->swap_needed) myjobtype |= JEventEVIOBuffer::JOB_SWAP;
-
 		jevent->jobtype = (JEventEVIOBuffer::JOBTYPE)myjobtype;
 		jevent->istreamorder = istreamorder++;
 
@@ -196,7 +200,7 @@ JEventEVIOBuffer* JEventSource_EVIO::GetJEventEVIOBufferFromPool(void)
 		// Get the JQueue where parsed events should be placed. This will be
 		// part of the JQueueSet that the JThreadManager associated with this
 		// event source.
-		evt->mParsedQueue = mApplication->GetJThreadManager()->GetQueue(this, JQueueSet::JQueueType::Events, "Parsed");
+		evt->mParsedQueue = mEventQueue;
 
 	}else{
 		evt = buff_pool.front();
@@ -211,10 +215,10 @@ JEventEVIOBuffer* JEventSource_EVIO::GetJEventEVIOBufferFromPool(void)
 //-----------------------------------
 void JEventSource_EVIO::ReturnJEventEVIOBufferToPool( JEventEVIOBuffer *evt )
 {
-	// This is primarily called from the JEventEVIOBuffer destructor via
+	// This is primarily called from the JEventEVIOBuffer shared_ptr deleter via
 	// the lambda function passed into it when it was created. It may also
 	// be called from GetEvent if there was a problem reading the event
-	// and the attempt was aboted.
+	// and the attempt was aborted.
 
 	std::lock_guard<std::mutex> lck(buff_pool_recycled_mutex);
 
@@ -222,5 +226,18 @@ void JEventSource_EVIO::ReturnJEventEVIOBufferToPool( JEventEVIOBuffer *evt )
 	buff_pool_recycled.push_back( evt );
 }
 
+//-----------------------------------
+// SetBOR
+//-----------------------------------
+void JEventSource_EVIO::SetBOR(DBORptrs *borptrs)
+{
+	/// Set the last created DBORptrs so it can be reused
+	/// by subsequent events. This also remembers the
+	/// object so it is deleted when this JEventSource_EVIO
+	/// object is destroyed.
+	/// n.b. the GetBOR() method is inlined since it is called often
+	last_DBORptrs = borptrs;
+	mBORptrs.emplace_back( std::shared_ptr<DBORptrs>(borptrs) );
+}
 
 

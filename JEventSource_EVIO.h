@@ -79,6 +79,8 @@
 
 #include <JEventEVIOBuffer.h>
 #include <HDEVIO.h>
+#include <DAQ/DBORptrs.h>
+
 
 
 class  JEventSource_EVIO: public JEventSource{
@@ -103,6 +105,9 @@ class  JEventSource_EVIO: public JEventSource{
 		// returned by the GetEvent method above.
 		std::shared_ptr<JTaskBase> GetProcessEventTask(std::shared_ptr<const JEvent>&& aEvent);
 
+		void SetBOR(DBORptrs *borptrs);
+		DBORptrs* GetBOR(void){ return last_DBORptrs; }
+
 	protected:
 		int                VERBOSE = 0;
 		bool          LOOP_FOREVER = false;
@@ -118,6 +123,8 @@ class  JEventSource_EVIO: public JEventSource{
 		void ReturnJEventEVIOBufferToPool( JEventEVIOBuffer *jeventeviobuffer );
 	
 		JQueueInterface *mParsedQueue = nullptr;
+		DBORptrs *last_DBORptrs = nullptr;
+		vector<std::shared_ptr<DBORptrs> > mBORptrs;
 
 	private:
 		std::atomic<uint64_t> mNcallsGetEvent{0};
