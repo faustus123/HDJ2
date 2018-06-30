@@ -13,6 +13,7 @@
 #include <JExceptionDataFormat.h>
 #include <LinkAssociations.h>
 #include <JEventEVIOBuffer.h>
+#include <JEventSource_EVIO.h>
 #include <DStatusBits.h>
 #include <DAQ/daq_param_type.h>
 #include <DAQ/DVector3.h>
@@ -195,9 +196,7 @@ void JEventEVIOBuffer::MakeEvents(void)
 		pe->event_status_bits   = 0;
 		pe->borptrs      = NULL; // may be set by either ParseBORbank or JEventSource_EVIOpp::GetEvent
 
-		// This will increment the source's event counter and cause it to be decremented later.
-		// This is important to ensure the JThread doesn't prematurely abandon the source.
-		pe->SetJEventSource( mEventSource);
+		pe->SetJApplication( GetJApplication() );
 	}
 
 	// Parse data in buffer to create data objects
@@ -223,9 +222,30 @@ void JEventEVIOBuffer::PublishEvents(void)
 	/// They will each be packaged with a task to run the event
 	/// processors.
 	for(auto pe: current_parsed_events){
-		// Add custom deleter to the shared pointer so that it simply
+
+		// The BOR event is special. We need to keep a copy of the
+		// most recent DBORptrs object so all parsed events have
+		// access to it. If the pe already has a pointer, it means
+		// that event was a BOR event and we should replace our
+		// latest one with it. Otherwise copy ours into the pe.
+		// n.b. we also need to remember any DBORptrs here so they
+		// get deleted at the end of processing.
+		if( pe->borptrs ){
+			((JEventSource_EVIO*)mEventSource)->SetBOR( pe->borptrs );
+		}else{
+			pe->borptrs = ((JEventSource_EVIO*)mEventSource)->GetBOR();
+		}
+
+		// This will increment the source's in-use event counter
+		// and allow the call to JEvent::Release to decrement it
+		// later. This is important to ensure the JThread doesn't
+		// prematurely abandon the source, allowing the program to
+		// exit while there are still events in the Parsed queue.
+		pe->SetJEventSource( mEventSource );
+
+		// Add custom deleter to the shared pointer so that it
 		// clears the "in_use" flag to make the event available for
-		// reuse in the pool rather than actually deleting it
+		// reuse in the pool. Also, decrement source's in-use counter.
 		std::shared_ptr<const JEvent> pesp(pe, [](DParsedEvent *pe){ pe->Release(); pe->in_use = false; } );
 
 		// Make a task to run the event processors on this event and
