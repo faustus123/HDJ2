@@ -194,6 +194,10 @@ void JEventEVIOBuffer::MakeEvents(void)
 		pe->copied_to_factories = false;
 		pe->event_status_bits   = 0;
 		pe->borptrs      = NULL; // may be set by either ParseBORbank or JEventSource_EVIOpp::GetEvent
+
+		// This will increment the source's event counter and cause it to be decremented later.
+		// This is important to ensure the JThread doesn't prematurely abandon the source.
+		pe->SetJEventSource( mEventSource);
 	}
 
 	// Parse data in buffer to create data objects
@@ -222,7 +226,7 @@ void JEventEVIOBuffer::PublishEvents(void)
 		// Add custom deleter to the shared pointer so that it simply
 		// clears the "in_use" flag to make the event available for
 		// reuse in the pool rather than actually deleting it
-		std::shared_ptr<const JEvent> pesp(pe, [](DParsedEvent *pe){ pe->in_use = false; } );
+		std::shared_ptr<const JEvent> pesp(pe, [](DParsedEvent *pe){ pe->Release(); pe->in_use = false; } );
 
 		// Make a task to run the event processors on this event and
 		// place it in the queue. (See JFunctions.cc in JANA code)
