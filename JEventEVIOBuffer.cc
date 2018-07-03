@@ -197,6 +197,7 @@ void JEventEVIOBuffer::MakeEvents(void)
 		pe->borptrs      = NULL; // may be set by either ParseBORbank or JEventSource_EVIOpp::GetEvent
 
 		pe->SetJApplication( GetJApplication() );
+		pe->SetEventNumber(pe->event_number);
 	}
 
 	// Parse data in buffer to create data objects
