@@ -122,7 +122,7 @@ class  JEventSource_EVIO: public JEventSource{
 		JEventEVIOBuffer* GetJEventEVIOBufferFromPool(void);
 		void ReturnJEventEVIOBufferToPool( JEventEVIOBuffer *jeventeviobuffer );
 	
-		JQueueInterface *mParsedQueue = nullptr;
+		JQueue *mParsedQueue = nullptr;
 		DBORptrs *last_DBORptrs = nullptr;
 		vector<std::shared_ptr<DBORptrs> > mBORptrs;
 

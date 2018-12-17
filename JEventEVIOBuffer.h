@@ -67,7 +67,7 @@ using namespace std;
 #include <HDEVIO.h>
 #include <DParsedEvent.h>
 #include <DAQ/DModuleType.h>
-#include <JQueueInterface.h>
+#include <JQueue.h>
 
 class JEventEVIOBuffer:public JEvent{
 	public:
@@ -100,7 +100,7 @@ class JEventEVIOBuffer:public JEvent{
 		list<DParsedEvent*> current_parsed_events;
 
 		// JQueue to place parsed events into
-		JQueueInterface *mParsedQueue = nullptr;
+		JQueue *mParsedQueue = nullptr;
 
 		int VERBOSE;
 		uint64_t Nrecycled;

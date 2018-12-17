@@ -253,7 +253,7 @@ void JEventEVIOBuffer::PublishEvents(void)
 		// place it in the queue. (See JFunctions.cc in JANA code)
 		auto task = JMakeAnalyzeEventTask( std::move(pesp), GetJApplication() );
 
-		while( mParsedQueue->AddTask( std::move(task) ) == JQueueInterface::Flags_t::kQUEUE_FULL ){
+		while( mParsedQueue->AddTask( std::move(task) ) == JQueue::Flags_t::kQUEUE_FULL ){
 			// Crap, the queue is full. Try pulling a task off and running it here.
 			// Then we can try adding our task again.
 			auto sEventTask = mParsedQueue->GetTask();

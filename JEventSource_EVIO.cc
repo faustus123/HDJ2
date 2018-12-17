@@ -11,7 +11,7 @@
 
 #include <JApplication.h>
 #include <JANA/JEventSourceGeneratorT.h>
-#include <JANA/JQueue.h>
+#include <JANA/JQueueSimple.h>
 #include "JEventSource_EVIO.h"
 #include "JEventEVIOBuffer.h"
 #include "JEventProcessorTest.h"
@@ -48,8 +48,8 @@ JEventSource_EVIO::JEventSource_EVIO(std::string source_name, JApplication *app)
 	// read via GetEvent(). The queue pointed to by mEventQueue will always be the
 	// last "Events" queue (so make sure "EVIOBuffer" is first).
 	// n.b. If we didn't set mEventQueue here, JANA would create one for us, but
-	// it would be a plain JQueue instead of a JQueueWithBarriers.
-	app->GetJThreadManager()->AddQueue( JQueueSet::JQueueType::Events, new JQueue("EVIOBuffer", 1) );
+	// it would be a plain JQueueSimple instead of a JQueueWithBarriers.
+	app->GetJThreadManager()->AddQueue( JQueueSet::JQueueType::Events, new JQueueSimple("EVIOBuffer", 1) );
 	mEventQueue = new JQueueWithBarriers("Parsed", 50, 50);
 }
 
@@ -197,7 +197,7 @@ JEventEVIOBuffer* JEventSource_EVIO::GetJEventEVIOBufferFromPool(void)
 		// Create new JEventEVIOBuffer object
 		evt = new JEventEVIOBuffer(mApplication);
 
-		// Get the JQueue where parsed events should be placed. This will be
+		// Get the JQueueSimple where parsed events should be placed. This will be
 		// part of the JQueueSet that the JThreadManager associated with this
 		// event source.
 		evt->mParsedQueue = mEventQueue;
