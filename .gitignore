@@ -1,0 +1,51 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.os
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+*.pyc
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Build system generated files
+.externalToolBuilders
+.project
+.pydevproject
+.cproject
+.settings
+.sconsign.dblite
+SBMS
+Linux_*
+Darwin_*
+src/.Linux_*
+src/.Darwin_*
+
+# Doxygen generated files
+docs/html/*
+docs/latex/*
